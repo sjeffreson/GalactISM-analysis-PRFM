@@ -9,12 +9,15 @@ from rbf.interpolate import RBFInterpolant
 import h5py
 import astro_helper as ah
 
+import configparser
+config = configparser.ConfigParser()
 import argparse, logging
 import time
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DEFAULT_ROOT_DIR = Path("/n/holystore01/LABS/itc_lab/Users/sjeffreson")
+config.read('config.ini')
+DEFAULT_ROOT_DIR = Path(config['DEFAULT']['ROOT_DIR'])
 class PRFMDataset:
     '''Calculate physical properties for validation of pressure-regulated star formation,
     using Arepo simulation data, in bins of R and phi (cylindrical coordinates).'''
@@ -30,6 +33,8 @@ class PRFMDataset:
         phibin_sep: float = np.pi/4., # rad
         zbin_sep: float = 10., # pc
         zbin_sep_ptl: float = 10., # pc, for computation of the potential
+        exclude_temp_above: float = 1.e4, # K
+        exclude_avir_below: float = 2., # virial parameter
         root_dir: Path = DEFAULT_ROOT_DIR,
         snapname: str = "snap-DESPOTIC_300.hdf5",
         realign_galaxy: bool=True, # according to angular momentum vector of gas
@@ -37,20 +42,7 @@ class PRFMDataset:
     ):
         
         self.galaxy_type = galaxy_type
-        if galaxy_type == "ETG-vlM":
-            self.galaxy_dir = "ETGs/vlM-output"
-        elif galaxy_type == "ETG-lowM":
-            self.galaxy_dir = "ETGs/lowM-output"
-        elif galaxy_type == "ETG-medM":
-            self.galaxy_dir = "ETGs/medM-output"
-        elif galaxy_type == "ETG-hiM":
-            self.galaxy_dir = "ETGs/hiM-output"
-        elif galaxy_type == "NGC300":
-            self.galaxy_dir = "NGC300"
-        elif galaxy_type == "MW":
-            self.galaxy_dir = "MW-tracers"
-        else:
-            raise ValueError("Galaxy type not recognized.")
+        self.galaxy_dir = config[galaxy_type]['SUBDIR']
 
         self.total_height = total_height * ah.kpc_to_cm
         self.Rmax = Rmax * ah.kpc_to_cm
@@ -60,6 +52,8 @@ class PRFMDataset:
         self.phibin_sep = phibin_sep
         self.zbin_sep = zbin_sep * ah.pc_to_cm
         self.zbin_sep_ptl = zbin_sep_ptl * ah.pc_to_cm
+        self.exclude_temp_above = exclude_temp_above
+        self.exclude_avir_below = exclude_avir_below
         self.root_dir = root_dir
         self.snapname = snapname
         self.realigned = realign_galaxy
@@ -70,7 +64,7 @@ class PRFMDataset:
             self.data[part_type] = self.read_snap_data(part_type)
 
         '''Sixth PartType for all stars'''
-        present_stellar_types = [i for i in range(2, 5) if i in self.data]
+        present_stellar_types = [key for key, value in self.data.items() if key in [2, 3, 4] and value is not None]
         if len(present_stellar_types) > 0:
             self.data[5] = {key: np.concatenate([self.data[i][key] for i in present_stellar_types]) for key in self.data[present_stellar_types[0]]}
 
@@ -149,12 +143,15 @@ class PRFMDataset:
         if PartType != 0:
             return snap_data
         else:
-            snap_data["Density"] = PartType_data['Density'][:] * PartType_data['Density'].attrs['to_cgs']
-            snap_data["U"] = PartType_data['InternalEnergy'][:] * PartType_data['InternalEnergy'].attrs['to_cgs']
-            snap_data["voldenses"] = PartType_data['Density'][:] * PartType_data['Density'].attrs['to_cgs']
-            snap_data["temps"] = (ah.gamma - 1.) * snap_data["U"] / ah.kB_cgs * ah.mu * ah.mp_cgs
-            snap_data["SFRs"] = PartType_data['StarFormationRate'][:] * PartType_data['StarFormationRate'].attrs['to_cgs']
             snap_data["AlphaVir"] = PartType_data['AlphaVir'][:]
+            snap_data["U"] = PartType_data['InternalEnergy'][:] * PartType_data['InternalEnergy'].attrs['to_cgs']
+            snap_data["temps"] = (ah.gamma - 1.) * snap_data["U"] / ah.kB_cgs * ah.mu * ah.mp_cgs
+            snap_data["Density"] = PartType_data['Density'][:] * PartType_data['Density'].attrs['to_cgs']
+            snap_data["voldenses"] = PartType_data['Density'][:] * PartType_data['Density'].attrs['to_cgs']
+            snap_data["SFRs"] = PartType_data['StarFormationRate'][:] * PartType_data['StarFormationRate'].attrs['to_cgs']
+
+            cnd = (snap_data['temps'][:] < self.exclude_temp_above) & (snap_data['AlphaVir'][:] > self.exclude_avir_below)
+            snap_data = {key: value[cnd] for key, value in snap_data.items()}
             return snap_data
     
     def cut_out_particles(self, PartType: int=0) -> Dict[str, np.array]:
@@ -201,6 +198,9 @@ class PRFMDataset:
         '''Realign the galaxy according to the center of mass and the angular momentum
         vector of the gas disk'''
 
+        if snap_data is None:
+            return None
+
         # new unit vectors
         zu = np.array([self.Lx, self.Ly, self.Lz])/np.sqrt(self.Lx**2+self.Ly**2+self.Lz**2)
         xu = np.array([-self.Ly, self.Lx, 0.]/np.sqrt(self.Lx**2+self.Ly**2))
@@ -225,6 +225,31 @@ class PRFMDataset:
         snap_data['phi_coords'] = np.arctan2(snap_data['y_coords'], snap_data['x_coords'])
 
         return snap_data
+
+    def get_prop_by_keyword(self, keyword: str) -> np.array:
+        '''Get any physical property by keyword, in standard units for plotting.'''
+        if keyword == 'Ptherm':
+            return self.get_gas_midplane_thermpress_Rphi()
+        elif keyword == 'Pturb':
+            return self.get_gas_midplane_turbpress_Rphi()
+        elif keyword == 'Ptot':
+            return self.get_gas_midplane_thermpress_Rphi() + self.get_gas_midplane_turbpress_Rphi()
+        elif keyword == 'Weight':
+            return self.get_weight_Rphi()/ah.kB_cgs
+        elif keyword == 'SigmaSFR':
+            return self.get_SFR_surfdens_Rphi() / ah.Msol_to_g * ah.kpc_to_cm**2 * ah.yr_to_s
+        elif keyword == 'SigmaGas':
+            return self.get_gas_surfdens_Rphi() / ah.Msol_to_g * ah.pc_to_cm**2
+        elif keyword == 'SigmaStar':
+            return self.get_stellar_surfdens_Rphi() / ah.Msol_to_g * ah.pc_to_cm**2
+        elif keyword == 'Omega':
+            return self.get_Omegaz_R() * ah.Myr_to_s
+        elif keyword == 'Kappa':
+            return self.get_kappa_R() * ah.Myr_to_s
+        elif keyword == 'Vcirc':
+            return self.get_rotation_curve_R() / ah.kms_to_cms
+        else:
+            raise ValueError("Keyword not recognized.")
 
     def get_rotation_curve_R(self) -> np.array:
         '''Get the 1D rotation curve of the galaxy, in cm/s.'''
@@ -272,6 +297,9 @@ class PRFMDataset:
         densities = np.zeros((self.Rbinno, self.phibinno, self.zbinno)) * np.nan
         for zbmin, zbmax, k in zip(self.zbin_edges[:-1], self.zbin_edges[1:], range(self.zbinno)):
             cnd = (self.data[0]["z_coords"] > zbmin) & (self.data[0]["z_coords"] < zbmax)
+            if len(self.data[0]["R_coords"][cnd]) == 0:
+                densities[:,:,k] = np.zeros((self.Rbinno, self.phibinno)) * np.nan
+                continue
             dens, R_edge, phi_edge, binnumber = binned_statistic_2d(
                 self.data[0]["R_coords"][cnd], self.data[0]["phi_coords"][cnd], self.data[0]["masses"][cnd],
                 bins=(self.Rbin_edges, self.phibin_edges),
@@ -294,6 +322,8 @@ class PRFMDataset:
             z_max = self.total_height
 
         cnd = (self.data[0]["z_coords"] > z_min) & (self.data[0]["z_coords"] < z_max)
+        if len(self.data[0]["R_coords"][cnd]) == 0:
+            logger.critical("No gas cells found in the given z-range.")
 
         summass, R_edge, phi_edge, binnumbers = binned_statistic_2d(
             self.data[0]["R_coords"][cnd], self.data[0]["phi_coords"][cnd], self.data[0]["masses"][cnd],
@@ -328,6 +358,8 @@ class PRFMDataset:
             z_max = self.total_height
 
         cnd = (self.data[0]["z_coords"] > z_min) & (self.data[0]["z_coords"] < z_max)
+        if len(self.data[0]["R_coords"][cnd]) == 0:
+            logger.critical("No gas cells found in the given z-range.")
 
         summass, R_edge, phi_edge, binnumbers = binned_statistic_2d(
             self.data[0]["R_coords"][cnd], self.data[0]["phi_coords"][cnd], self.data[0]["masses"][cnd],
@@ -374,6 +406,9 @@ class PRFMDataset:
         meanvels = self.get_gas_av_vel_xyz_Rphi(z_min=-self.total_height, z_max=self.total_height)
         for zbmin, zbmax, k in zip(self.zbin_edges[:-1], self.zbin_edges[1:], range(self.zbinno)):
             cnd = (self.data[0]["z_coords"] > zbmin) & (self.data[0]["z_coords"] < zbmax)
+            if len(self.data[0]["R_coords"][cnd]) == 0:
+                veldisps_z[:,:,k] = np.ones((self.Rbinno, self.phibinno)) * np.nan
+                continue
             veldisps_x, veldisp_y, veldisp_z = self.get_gas_veldisps_xyz_Rphi(meanvels_xyz=meanvels, z_min=zbmin, z_max=zbmax)
             veldisps_z[:,:,k] = veldisp_z
         
@@ -385,18 +420,19 @@ class PRFMDataset:
         '''Gas midplane thermal pressure (2D) in cgs units.'''
 
         Pth = np.zeros((self.Rbinno, self.phibinno, self.zbinno)) * np.nan
-        for zbmin, zbmax in zip(self.zbin_edges[:-1], self.zbin_edges[1:]):
+        for zbmin, zbmax, k in zip(self.zbin_edges[:-1], self.zbin_edges[1:], range(self.zbinno)):
             cnd = (self.data[0]["z_coords"] > zbmin) & (self.data[0]["z_coords"] < zbmax)
+            if len(self.data[0]["R_coords"][cnd]) == 0:
+                Pth[:,:,k] = np.ones((self.Rbinno, self.phibinno)) * np.nan
+                continue
             Pth_bin, R_edge, phi_edge, binnumber = binned_statistic_2d(
                 self.data[0]["R_coords"][cnd], self.data[0]["phi_coords"][cnd], self.data[0]["masses"][cnd]*self.data[0]["U"][cnd],
                 bins=(self.Rbin_edges, self.phibin_edges),
                 statistic='sum'
             )
-            Pth[:,:,k] = Pth_bin
+            Pth[:,:,k] = Pth_bin / (self.Rbin_width * self.zbin_sep * self.Rbin_centers_2d*self.phibin_sep) # mass * U --> dens * U
 
-        Pth = Pth / (self.Rbin_width * self.zbin_sep * self.Rbin_centers_2d*self.phibin_sep) # mass * U --> dens * U
-
-        return np.nanmax(Pth * (ah.gamma-1.) / ah.kB_cgs * ah.mu * ah.mp_cgs, axis=2) # dens * U --> Ptherm
+        return np.nanmax(Pth * (ah.gamma-1.) / ah.kB_cgs, axis=2) # dens * U --> Ptherm
 
     def get_SFR_surfdens_Rphi(self) -> np.array:
         '''Gas star formation rate surface density in cgs units.'''
@@ -463,10 +499,10 @@ class PRFMDataset:
         function can be found in these docs.'''
 
         try:
-            x_all = np.concatenate([self.data[i]["x_coords"] for i in PartTypes])
-            y_all = np.concatenate([self.data[i]["y_coords"] for i in PartTypes])
-            z_all = np.concatenate([self.data[i]["z_coords"] for i in PartTypes])
-            ptl_all = np.concatenate([self.data[i]["Potential"] for i in PartTypes])
+            x_all = np.concatenate([self.data[i]["x_coords"] for i in PartTypes if self.data[i] is not None])
+            y_all = np.concatenate([self.data[i]["y_coords"] for i in PartTypes if self.data[i] is not None])
+            z_all = np.concatenate([self.data[i]["z_coords"] for i in PartTypes if self.data[i] is not None])
+            ptl_all = np.concatenate([self.data[i]["Potential"] for i in PartTypes if self.data[i] is not None])
             coords_all = np.array([x_all, y_all, z_all]).T
         except KeyError:
             logger.critical("Requested particle types not loaded: {:s}".format(str([i for i in PartTypes if i not in self.data])))

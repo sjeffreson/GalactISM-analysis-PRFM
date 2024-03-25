@@ -4,14 +4,15 @@ import glob, os, re, sys
 
 from PRFMData import PRFMDataset
 
-ETG_vlM_rot = PRFMDataset(
-    galaxy_type="ETG-vlM",
+NGC300 = PRFMDataset(
+    galaxy_type="MW",
     total_height=0.3, # kpc
-    Rmax=2., # kpc
+    Rmax=13., # kpc
     phibin_sep=np.pi/12., # rad
-    snapname="snap-DESPOTIC_100.hdf5",
+    snapname="snap-DESPOTIC_600.hdf5",
     realign_galaxy=True, # according to angular momentum vector of gas
     required_particle_types=[0,1,2,3,4], # just gas by default
 )
 
-weight = ETG_vlM_rot.get_weight_Rphi()
+props = NGC300.get_prop_by_keyword('Weight')
+props = NGC300.get_prop_by_keyword('SigmaSFR')
