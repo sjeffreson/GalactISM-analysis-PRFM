@@ -17,7 +17,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 config.read('config.ini')
-DEFAULT_ROOT_DIR = Path(config['DEFAULT']['ROOT_DIR'])
 class PRFMDataset:
     '''Calculate physical properties for validation of pressure-regulated star formation,
     using Arepo simulation data, in bins of R and phi (cylindrical coordinates).'''
@@ -33,14 +32,14 @@ class PRFMDataset:
         phibin_sep: float = np.pi/4., # rad
         zbin_sep: float = 10., # pc
         zbin_sep_ptl: float = 10., # pc, for computation of the potential
-        exclude_temp_above: float = 1.e4, # K
-        exclude_avir_below: float = 2., # virial parameter
-        root_dir: Path = DEFAULT_ROOT_DIR,
+        exclude_temp_above: float = None, # K
+        exclude_avir_below: float = None, # virial parameter
         snapname: str = "snap-DESPOTIC_300.hdf5",
-        realign_galaxy: bool=True, # according to angular momentum vector of gas
+        realign_galaxy_to_gas: bool=False, # according to angular momentum vector of gas
+        realign_galaxy_to_disk: bool=True, # according to angular momentum vector of entire disk system
         required_particle_types: List[int] = [0], # just gas by default
     ):
-        
+        self.ROOT_DIR = Path(config[galaxy_type]['ROOT_DIR'])
         self.galaxy_type = galaxy_type
         self.galaxy_dir = config[galaxy_type]['SUBDIR']
 
@@ -54,9 +53,9 @@ class PRFMDataset:
         self.zbin_sep_ptl = zbin_sep_ptl * ah.pc_to_cm
         self.exclude_temp_above = exclude_temp_above
         self.exclude_avir_below = exclude_avir_below
-        self.root_dir = root_dir
         self.snapname = snapname
-        self.realigned = realign_galaxy
+        self.realign_galaxy_to_gas = realign_galaxy_to_gas
+        self.realign_galaxy_to_disk = realign_galaxy_to_disk
 
         '''Load all required data'''
         self.data = {}
@@ -68,12 +67,30 @@ class PRFMDataset:
         if len(present_stellar_types) > 0:
             self.data[5] = {key: np.concatenate([self.data[i][key] for i in present_stellar_types]) for key in self.data[present_stellar_types[0]]}
 
-        if realign_galaxy:
+        if self.realign_galaxy_to_gas & self.realign_galaxy_to_disk:
+            raise ValueError("Galaxy cannot be realigned to both gas and disk. Please choose one.")
+        if self.realign_galaxy_to_gas:
             if 0 not in self.data:
-                raise ValueError("Gas data must be loaded to realign the galaxy.")
+                raise ValueError("Gas data must be loaded to realign the galaxy to the gas.")
             self.x_CM, self.y_CM, self.z_CM, self.vx_CM, self.vy_CM, self.vz_CM = self.get_gas_disk_COM()
             self.Lx, self.Ly, self.Lz = self.get_gas_disk_angmom()
             self.data = {key: self.set_realign_galaxy(value) for key, value in self.data.items()}
+        elif self.realign_galaxy_to_disk:
+            if 0 not in self.data or 2 not in self.data:
+                raise ValueError("Gas and stellar disk particles must be loaded to realign the galaxy to the disk.")
+            self.x_CM, self.y_CM, self.z_CM, self.vx_CM, self.vy_CM, self.vz_CM = self.get_disk_COM()
+            self.Lx, self.Ly, self.Lz = self.get_disk_angmom()
+            self.data = {key: self.set_realign_galaxy(value) for key, value in self.data.items()}
+
+        '''Case that we want to cut out gas according to temperature or virial
+        parameter thresholds'''
+        self.cutgas = None
+        cnd = np.ones(len(self.data[0]["R_coords"]), dtype=bool)
+        if exclude_temp_above is not None:
+            cnd = cnd & (self.data[0]["temps"] < exclude_temp_above)
+        if exclude_avir_below is not None:
+            cnd = cnd & ~((self.data[0]["AlphaVir"] < exclude_avir_below) & (self.data[0]["AlphaVir"] > 0.))
+        self.cutgas = {key: value[cnd] for key, value in self.data[0].items()}
 
         '''Grid on which to compute arrays'''
         self.Rbinno = int(np.rint((self.Rmax-self.Rmin)/(self.Rbin_sep)))
@@ -119,7 +136,7 @@ class PRFMDataset:
         Returns:
             Dict: dictionary with only the relevant gas information, in cgs units
         """
-        snapshot = h5py.File(DEFAULT_ROOT_DIR / self.galaxy_dir / self.snapname, "r")
+        snapshot = h5py.File(self.ROOT_DIR / self.galaxy_dir / self.snapname, "r")
         header = snapshot["Header"]
         if "PartType"+str(PartType) not in snapshot:
             return None
@@ -149,9 +166,6 @@ class PRFMDataset:
             snap_data["Density"] = PartType_data['Density'][:] * PartType_data['Density'].attrs['to_cgs']
             snap_data["voldenses"] = PartType_data['Density'][:] * PartType_data['Density'].attrs['to_cgs']
             snap_data["SFRs"] = PartType_data['StarFormationRate'][:] * PartType_data['StarFormationRate'].attrs['to_cgs']
-
-            cnd = (snap_data['temps'][:] < self.exclude_temp_above) & (snap_data['AlphaVir'][:] > self.exclude_avir_below)
-            snap_data = {key: value[cnd] for key, value in snap_data.items()}
             return snap_data
     
     def cut_out_particles(self, PartType: int=0) -> Dict[str, np.array]:
@@ -159,6 +173,20 @@ class PRFMDataset:
 
         cnd = (self.data[PartType]["R_coords"] < self.Rmax) & (np.fabs(self.data[PartType]["z_coords"]) < self.Rmax)
         return {key: value[cnd] for key, value in self.data[PartType].items()}
+
+    def get_disk_COM(self) -> Tuple[float, float, float, float, float, float]:
+        '''Get the center of mass (positional and velocity) of the gas/stellar disk.'''
+
+        gasstar_data = {key: np.concatenate([self.data[2][key], self.cut_out_particles(PartType=0)[key]]) for key in self.data[2]}
+
+        x_CM = np.average(gasstar_data["x_coords"], weights=gasstar_data["masses"])
+        y_CM = np.average(gasstar_data["y_coords"], weights=gasstar_data["masses"])
+        z_CM = np.average(gasstar_data["z_coords"], weights=gasstar_data["masses"])
+        vx_CM = np.average(gasstar_data["velxs"], weights=gasstar_data["masses"])
+        vy_CM = np.average(gasstar_data["velys"], weights=gasstar_data["masses"])
+        vz_CM = np.average(gasstar_data["velzs"], weights=gasstar_data["masses"])
+
+        return x_CM, y_CM, z_CM, vx_CM, vy_CM, vz_CM
 
     def get_gas_disk_COM(self) -> Tuple[float, float, float, float, float, float]:
         '''Get the center of mass (positional and velocity) of the gas disk'''
@@ -173,6 +201,26 @@ class PRFMDataset:
         vz_CM = np.average(gas_data_cut["velzs"], weights=gas_data_cut["masses"])
 
         return x_CM, y_CM, z_CM, vx_CM, vy_CM, vz_CM
+
+    def get_disk_angmom(self) -> Tuple[float, float, float]:
+        '''Get the angular momentum vector of the disk'''
+
+        x_CM, y_CM, z_CM, vx_CM, vy_CM, vz_CM = self.get_disk_COM()
+        gasstar_data = {key: np.concatenate([self.data[2][key], self.cut_out_particles(PartType=0)[key]]) for key in self.data[2]}
+
+        Lx = np.sum(
+            gasstar_data["masses"]*((gasstar_data["y_coords"]-y_CM)*(gasstar_data["velzs"]-vz_CM) -
+            (gasstar_data["z_coords"]-z_CM)*(gasstar_data["velys"]-vy_CM))
+        )
+        Ly = np.sum(
+            gasstar_data["masses"]*((gasstar_data["z_coords"]-z_CM)*(gasstar_data["velxs"]-vx_CM) -
+            (gasstar_data["x_coords"]-x_CM)*(gasstar_data["velzs"]-vz_CM))
+        )
+        Lz = np.sum(
+            gasstar_data["masses"]*((gasstar_data["x_coords"]-x_CM)*(gasstar_data["velys"]-vy_CM) -
+            (gasstar_data["y_coords"]-y_CM)*(gasstar_data["velxs"]-vx_CM))
+        )
+        return Lx, Ly, Lz
 
     def get_gas_disk_angmom(self) -> Tuple[float, float, float]:
         '''Get the angular momentum vector of the gas disk'''
@@ -226,8 +274,14 @@ class PRFMDataset:
 
         return snap_data
 
+    def get_keys(self):
+            for key in vars(self).keys():
+                print(key)
+
     def get_prop_by_keyword(self, keyword: str) -> np.array:
         '''Get any physical property by keyword, in standard units for plotting.'''
+        if keyword == 'count':
+            return self.get_count_Rphi()
         if keyword == 'Ptherm':
             return self.get_gas_midplane_thermpress_Rphi()
         elif keyword == 'Pturb':
@@ -235,7 +289,7 @@ class PRFMDataset:
         elif keyword == 'Ptot':
             return self.get_gas_midplane_thermpress_Rphi() + self.get_gas_midplane_turbpress_Rphi()
         elif keyword == 'Weight':
-            return self.get_weight_Rphi()/ah.kB_cgs
+            return self.get_weight_Rphi() / ah.kB_cgs
         elif keyword == 'SigmaSFR':
             return self.get_SFR_surfdens_Rphi() / ah.Msol_to_g * ah.kpc_to_cm**2 * ah.yr_to_s
         elif keyword == 'SigmaGas':
@@ -288,20 +342,35 @@ class PRFMDataset:
 
         return kappas
 
-    def get_gas_density_Rphiz(self, zbinsep: float=None) -> np.array:
+    def get_count_Rphi(self) -> np.array:
+        '''Get the number of particles being sampled per bin.'''
+
+        count, x_edge, y_edge, binnumber = binned_statistic_2d(
+            self.data[0]["R_coords"], self.data[0]["phi_coords"], self.data[0]["SFRs"],
+            bins=(self.Rbin_edges, self.phibin_edges),
+            statistic='count'
+        )
+
+        return count
+
+    def get_gas_density_Rphiz(self, zbinsep: float=None, cuttempavir: bool=False) -> np.array:
         '''Get the 3D gas mid-plane density in cgs'''
 
         if zbinsep==None:
             zbinsep = self.zbin_sep
+        if cuttempavir:
+            data = self.cutgas
+        else:
+            data = self.data[0]
 
         densities = np.zeros((self.Rbinno, self.phibinno, self.zbinno)) * np.nan
         for zbmin, zbmax, k in zip(self.zbin_edges[:-1], self.zbin_edges[1:], range(self.zbinno)):
-            cnd = (self.data[0]["z_coords"] > zbmin) & (self.data[0]["z_coords"] < zbmax)
-            if len(self.data[0]["R_coords"][cnd]) == 0:
+            cnd = (data["z_coords"] > zbmin) & (data["z_coords"] < zbmax)
+            if len(data["R_coords"][cnd]) == 0:
                 densities[:,:,k] = np.zeros((self.Rbinno, self.phibinno)) * np.nan
                 continue
             dens, R_edge, phi_edge, binnumber = binned_statistic_2d(
-                self.data[0]["R_coords"][cnd], self.data[0]["phi_coords"][cnd], self.data[0]["masses"][cnd],
+                data["R_coords"][cnd], data["phi_coords"][cnd], data["masses"][cnd],
                 bins=(self.Rbin_edges, self.phibin_edges),
                 statistic='sum'
             )
@@ -321,12 +390,12 @@ class PRFMDataset:
         if z_max==None:
             z_max = self.total_height
 
-        cnd = (self.data[0]["z_coords"] > z_min) & (self.data[0]["z_coords"] < z_max)
-        if len(self.data[0]["R_coords"][cnd]) == 0:
+        cnd = (self.cutgas["z_coords"] > z_min) & (self.cutgas["z_coords"] < z_max)
+        if len(self.cutgas["R_coords"][cnd]) == 0:
             logger.critical("No gas cells found in the given z-range.")
 
         summass, R_edge, phi_edge, binnumbers = binned_statistic_2d(
-            self.data[0]["R_coords"][cnd], self.data[0]["phi_coords"][cnd], self.data[0]["masses"][cnd],
+            self.cutgas["R_coords"][cnd], self.cutgas["phi_coords"][cnd], self.cutgas["masses"][cnd],
             bins=(self.Rbin_edges, self.phibin_edges), expand_binnumbers=True,
             statistic='sum'
         )
@@ -334,7 +403,7 @@ class PRFMDataset:
         meanvels = []
         for velstring in ["velxs", "velys", "velzs"]:
             meanvel, R_edge, phi_edge, binnumbers = binned_statistic_2d(
-                self.data[0]["R_coords"][cnd], self.data[0]["phi_coords"][cnd], self.data[0]["masses"][cnd]*self.data[0][velstring][cnd],
+                self.cutgas["R_coords"][cnd], self.cutgas["phi_coords"][cnd], self.cutgas["masses"][cnd]*self.cutgas[velstring][cnd],
                 bins=(self.Rbin_edges, self.phibin_edges), expand_binnumbers=True,
                 statistic='sum'
             )
@@ -357,12 +426,12 @@ class PRFMDataset:
         if z_max==None:
             z_max = self.total_height
 
-        cnd = (self.data[0]["z_coords"] > z_min) & (self.data[0]["z_coords"] < z_max)
-        if len(self.data[0]["R_coords"][cnd]) == 0:
+        cnd = (self.cutgas["z_coords"] > z_min) & (self.cutgas["z_coords"] < z_max)
+        if len(self.cutgas["R_coords"][cnd]) == 0:
             logger.critical("No gas cells found in the given z-range.")
 
         summass, R_edge, phi_edge, binnumbers = binned_statistic_2d(
-            self.data[0]["R_coords"][cnd], self.data[0]["phi_coords"][cnd], self.data[0]["masses"][cnd],
+            self.cutgas["R_coords"][cnd], self.cutgas["phi_coords"][cnd], self.cutgas["masses"][cnd],
             bins=(self.Rbin_edges, self.phibin_edges), expand_binnumbers=True,
             statistic='sum'
         )
@@ -385,10 +454,10 @@ class PRFMDataset:
             bn_y[bn_y<1] = 1
             bn_x -= 1
             bn_y -= 1
-            vel_minus_mean = self.data[0][velstring][cnd]-meanvel[bn_x, bn_y]
+            vel_minus_mean = self.cutgas[velstring][cnd]-meanvel[bn_x, bn_y]
 
             sumveldisp, R_edge, phi_edge, binnumbers_ = binned_statistic_2d(
-                self.data[0]["R_coords"][cnd], self.data[0]["phi_coords"][cnd], self.data[0]["masses"][cnd]*vel_minus_mean**2,
+                self.cutgas["R_coords"][cnd], self.cutgas["phi_coords"][cnd], self.cutgas["masses"][cnd]*vel_minus_mean**2,
                 bins=(self.Rbin_edges, self.phibin_edges),
                 statistic='sum'
             )
@@ -396,17 +465,16 @@ class PRFMDataset:
 
         return tuple(veldisps_xyz)
 
-    def get_gas_midplane_turbpress_Rphi(self) -> Tuple[np.array, np.array, np.array]:
-        '''Mid-plane gas turbulent pressure (2D) in the vertical/plane-perpendicular direction, in cgs units,
-        divided by the Boltzmann constant.'''
+    def get_gas_turbpress_Rphiz(self) -> np.array:
+        '''3D Gas turbulent pressure in cgs units, divided by the Boltzmann constant.'''
 
-        density = self.get_gas_density_Rphiz()
+        density = self.get_gas_density_Rphiz(cuttempavir=True)
 
         veldisps_z = np.zeros((self.Rbinno, self.phibinno, self.zbinno)) * np.nan
         meanvels = self.get_gas_av_vel_xyz_Rphi(z_min=-self.total_height, z_max=self.total_height)
         for zbmin, zbmax, k in zip(self.zbin_edges[:-1], self.zbin_edges[1:], range(self.zbinno)):
-            cnd = (self.data[0]["z_coords"] > zbmin) & (self.data[0]["z_coords"] < zbmax)
-            if len(self.data[0]["R_coords"][cnd]) == 0:
+            cnd = (self.cutgas["z_coords"] > zbmin) & (self.cutgas["z_coords"] < zbmax)
+            if len(self.cutgas["R_coords"][cnd]) == 0:
                 veldisps_z[:,:,k] = np.ones((self.Rbinno, self.phibinno)) * np.nan
                 continue
             veldisps_x, veldisp_y, veldisp_z = self.get_gas_veldisps_xyz_Rphi(meanvels_xyz=meanvels, z_min=zbmin, z_max=zbmax)
@@ -414,6 +482,13 @@ class PRFMDataset:
         
         turbpress_3D = veldisps_z**2 * density / ah.kB_cgs
 
+        return turbpress_3D
+
+    def get_gas_midplane_turbpress_Rphi(self) -> np.array:
+        '''Mid-plane gas turbulent pressure (2D) in the vertical/plane-perpendicular direction, in cgs units,
+        divided by the Boltzmann constant.'''
+
+        turbpress_3D = self.get_gas_turbpress_Rphiz()
         return np.nanmax(turbpress_3D, axis=2)
 
     def get_gas_midplane_thermpress_Rphi(self) -> np.array:
@@ -421,12 +496,12 @@ class PRFMDataset:
 
         Pth = np.zeros((self.Rbinno, self.phibinno, self.zbinno)) * np.nan
         for zbmin, zbmax, k in zip(self.zbin_edges[:-1], self.zbin_edges[1:], range(self.zbinno)):
-            cnd = (self.data[0]["z_coords"] > zbmin) & (self.data[0]["z_coords"] < zbmax)
-            if len(self.data[0]["R_coords"][cnd]) == 0:
+            cnd = (self.cutgas["z_coords"] > zbmin) & (self.cutgas["z_coords"] < zbmax)
+            if len(self.cutgas["R_coords"][cnd]) == 0:
                 Pth[:,:,k] = np.ones((self.Rbinno, self.phibinno)) * np.nan
                 continue
             Pth_bin, R_edge, phi_edge, binnumber = binned_statistic_2d(
-                self.data[0]["R_coords"][cnd], self.data[0]["phi_coords"][cnd], self.data[0]["masses"][cnd]*self.data[0]["U"][cnd],
+                self.cutgas["R_coords"][cnd], self.cutgas["phi_coords"][cnd], self.cutgas["masses"][cnd]*self.cutgas["U"][cnd],
                 bins=(self.Rbin_edges, self.phibin_edges),
                 statistic='sum'
             )
@@ -443,7 +518,7 @@ class PRFMDataset:
             statistic='sum'
         )
 
-        return Sfr / (self.Rbin_width * self.zbin_sep * self.Rbin_centers_2d*self.phibin_sep)
+        return Sfr / (self.Rbin_width * self.Rbin_centers_2d*self.phibin_sep)
 
     def get_gas_surfdens_Rphi(self) -> np.array:
         '''Gas surface density in cgs units.'''

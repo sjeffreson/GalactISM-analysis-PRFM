@@ -10,6 +10,7 @@ yr_to_s = 3.15576E7
 Msol_to_g = 1.99E33
 kpc_to_cm = 3.086E21
 pc_to_cm = 3.086E18
+cgs_to_Msolkpcyr = 1./Msol_to_g * (kpc_to_cm)**2 * yr_to_s
 kms_to_cms = 1E5
 LCO_to_H2mass = 2.7E28
 gamma = 5./3.

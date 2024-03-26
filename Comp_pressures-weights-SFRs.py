@@ -15,11 +15,24 @@ logger = logging.getLogger(__name__)
 
 '''Compute all values for the properties to be plotted in Pressures-weights-SFRs_fig.ipynb,
 for one galaxy at a time.'''
-PROPS = ['Ptot', 'Ptherm', 'Pturb', 'Weight', 'SigmaSFR']
+PROPS = ['count', 'Ptot', 'Ptherm', 'Pturb', 'Weight', 'SigmaSFR']
 
 config.read('config.ini')
 galname = sys.argv[1]
 params = config[galname]
+savestring = ""
+EXCLUDE_TEMP = params.get('EXCLUDE_TEMP')
+if EXCLUDE_TEMP == 'None':
+    EXCLUDE_TEMP = None
+else:
+    EXCLUDE_TEMP = float(EXCLUDE_TEMP)
+    savestring += "_T{:.1e}".format(EXCLUDE_TEMP)
+EXCLUDE_AVIR = params.get('EXCLUDE_AVIR')
+if EXCLUDE_AVIR == 'None':
+    EXCLUDE_AVIR = None
+else:
+    EXCLUDE_AVIR = float(EXCLUDE_AVIR)
+    savestring += "_avir{:.1e}".format(EXCLUDE_AVIR)
 
 snapnames = [
     "snap-DESPOTIC_{0:03d}.hdf5".format(i) for i in 
@@ -34,8 +47,8 @@ for snapname in snapnames:
         Rmax=params.getfloat('RMAX'), # kpc
         phibin_sep=np.pi/12.,
         snapname=snapname,
-        exclude_temp_above=params.getfloat('EXCLUDE_TEMP'),
-        exclude_avir_below=params.getfloat('EXCLUDE_AVIR'),
+        exclude_temp_above=EXCLUDE_TEMP,
+        exclude_avir_below=EXCLUDE_AVIR,
         realign_galaxy=True, # according to angular momentum vector of gas
         required_particle_types=[0,1,2,3,4], # just gas by default
     )
@@ -49,13 +62,19 @@ for snapname in snapnames:
             props_3D[prop] = np.concatenate((props_3D[prop], gal.get_prop_by_keyword(prop)[:,:,np.newaxis]), axis=2)
         logger.info("Adding {0}, shape of {1}: {2}".format(snapname, prop, props_3D[prop].shape))
 
+    '''Save the Rbin_centers as a temporary pickle, if it does not already exist'''
+    filesavedir = Path(params['ROOT_DIR']) / params['SUBDIR']
+    filesavename = str(filesavedir / "Rbin_centers_{:s}".format(galname)) + savestring + ".pkl"
+    if gal.Rbin_centers is not None and not (Path(filesavename)).exists():
+        with open(filesavename, "wb") as f:
+            pickle.dump(gal.Rbin_centers, f)
+        logger.info("Saved: {:s}".format(str(filesavename)))
+
     '''Save the dictionary to a temporary pickle at regular intervals'''
-    if (props_3D[PROPS[-1]].ndim > 2) & (props_3D[PROPS[-1]].shape[-1] % 25 == 0):
-        filesavedir = Path(config['DEFAULT']['ROOT_DIR']) / params['SUBDIR']
-        filesavename = filesavedir / "pressures-weights-SFRs_{:s}_{:s}_T{:.1e}_avir{:.1e}.pkl".format(
-            re.search(r'\d+', snapnames[0]).group(),
-            galname, params.getfloat('EXCLUDE_TEMP'), params.getfloat('EXCLUDE_AVIR')
-        )
+    if (props_3D[PROPS[-1]].ndim > 2) & ((props_3D[PROPS[-1]].shape[-1] % 25 == 0) | (snapname == snapnames[-1])):
+        filesavename = str(filesavedir / "pressures-weights-SFRs_{:s}_{:s}_".format(
+            re.search(r'\d+', snapname).group(), galname
+        )) + savestring + ".pkl"
         with open(filesavename, "wb") as f:
             pickle.dump(props_3D, f)
         logger.info("Saved: {:s}".format(str(filesavename)))
