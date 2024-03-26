@@ -545,19 +545,32 @@ class PRFMDataset:
 
         return dens / (self.Rbin_width * self.Rbin_centers_2d*self.phibin_sep)
 
+    def get_weight_integrand_Rphiz(self, PartTypes: List[int] = [0,1,2,3,4], polyno: int=2, wndwlen: int=5) -> np.array:
+        '''Get the integrand for the weight function, in cgs units.'''
+
+        rho_grid = self.get_gas_density_Rphiz(zbinsep=self.zbin_sep_ptl)
+        ptl_grid = self.get_potential_Rphiz(PartTypes=PartTypes)
+
+        dz = np.gradient(self.zbin_centers_3d_ptl, axis=2)
+        dPhi = np.gradient(ptl_grid, axis=2)
+        dPhidz = dPhi/dz
+
+        integrand = rho_grid * dPhidz * self.zbin_sep_ptl
+        return integrand
+
     def get_weight_Rphi(self, PartTypes: List[int] = [0,1,2,3,4], polyno: int=2, wndwlen: int=5) -> np.array:
         '''Get the weights for the interstellar medium, based on the density and potential
         grids. Polyno and wndlen are the parameters for the Savitzky-Golay filter, which
         is used to take the z-derivative of the potential grid. Output in cgs units.'''
 
-        rho_grid = self.get_gas_density_Rphiz(zbinsep=self.zbin_sep_ptl)
-        ptl_grid = self.get_potential_Rphiz(PartTypes=PartTypes)
-        
-        dz = sg(self.zbin_centers_3d_ptl, wndwlen, polyno, deriv=1, axis=2)
-        dPhi = sg(ptl_grid, wndwlen, polyno, deriv=1, axis=2)
-        dPhidz = dPhi/dz
+        integrand = self.get_weight_integrand_Rphiz(PartTypes=PartTypes, polyno=polyno, wndwlen=wndwlen)
+        return np.sum(np.fabs(integrand)/2., axis=2)
+    
+    def get_weight_asymm_Rphi(self, PartTypes: List[int] = [0,1,2,3,4], polyno: int=2, wndwlen: int=5) -> np.array:
+        '''Get the part of the force sum that's asymmetric and does not contribute to the weight.'''
 
-        return np.sum(np.fabs(rho_grid * dPhidz * self.zbin_sep_ptl)/2., axis=2)
+        integrand = self.get_weight_integrand_Rphiz(PartTypes=PartTypes, polyno=polyno, wndwlen=wndwlen)
+        return (np.fabs(np.sum(integrand, axis=2)))
 
     def get_potential_Rphiz(
         self,
