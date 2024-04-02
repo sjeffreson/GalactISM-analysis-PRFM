@@ -13,12 +13,12 @@ import time
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-'''Compute all values for the properties to be plotted in Pressures-weights-SFRs_fig.ipynb,
+'''Compute counts and properties of non-ionized gas, to be plotted in Pressures-weights-SFRs_fig.ipynb,
 for one galaxy at a time.'''
-PROPS = ['count', 'Ptot', 'Ptherm', 'Pturb', 'Weight', 'Force', 'ForceLeft', 'ForceRight', 'SigmaSFR']
+PROPS = ['count', 'midplane-count', 'Ptot', 'Ptherm', 'Pturb', 'SigmaSFR']
 
 config.read(sys.argv[1])
-galname = sys.argv[1]
+galname = sys.argv[2]
 params = config[galname]
 savestring = ""
 EXCLUDE_TEMP = params.get('EXCLUDE_TEMP')
@@ -42,6 +42,7 @@ snapnames = [
 props_3D = {key: None for key in PROPS}
 for snapname in snapnames:
     gal = PRFMDataset(
+        params=params,
         galaxy_type=galname,
         total_height=params.getfloat('TOT_HEIGHT'), # kpc
         Rmax=params.getfloat('RMAX'), # kpc
@@ -49,6 +50,7 @@ for snapname in snapnames:
         snapname=snapname,
         exclude_temp_above=EXCLUDE_TEMP,
         exclude_avir_below=EXCLUDE_AVIR,
+        exclude_HII=True,
         realign_galaxy_to_gas=True, # according to angular momentum vector of gas
         required_particle_types=[0,1,2,3,4], # just gas by default
     )
@@ -64,7 +66,7 @@ for snapname in snapnames:
 
     '''Save the Rbin_centers as a temporary pickle, if it does not already exist'''
     filesavedir = Path(params['ROOT_DIR']) / params['SUBDIR']
-    filesavename = str(filesavedir / "Rbin_centers{:s}".format(galname)) + savestring + ".pkl"
+    filesavename = str(filesavedir / "Rbin_centers_{:s}".format(galname)) + savestring + ".pkl"
     if gal.Rbin_centers is not None and not (Path(filesavename)).exists():
         with open(filesavename, "wb") as f:
             pickle.dump(gal.Rbin_centers, f)
@@ -72,7 +74,7 @@ for snapname in snapnames:
 
     '''Save the dictionary to a temporary pickle at regular intervals'''
     if (props_3D[PROPS[-1]].ndim > 2) & ((props_3D[PROPS[-1]].shape[-1] % 25 == 0) | (snapname == snapnames[-1])):
-        filesavename = str(filesavedir / "pressures-weights-SFRs_{:s}_{:s}".format(
+        filesavename = str(filesavedir / "pressures-SFRs-no-HII_{:s}_{:s}".format(
             re.search(r'\d+', snapname).group(), galname
         )) + savestring + ".pkl"
         with open(filesavename, "wb") as f:
