@@ -614,10 +614,10 @@ class PRFMDataset:
 
         return Sfr / (self.Rbin_width * self.Rbin_centers_2d*self.phibin_sep)
 
-    def get_weight_integrand_Rphiz(self, PartTypes: List[int] = [0,1,2,3,4], polyno: int=2, wndwlen: int=5) -> np.array:
+    def get_weight_integrand_Rphiz(self, PartTypes: List[int] = [0,1,2,3,4], PartType: int=0) -> np.array:
         '''Get the integrand for the weight function, in cgs units.'''
 
-        rho_grid = self.get_gas_density_Rphiz(zbinsep=self.zbin_sep_ptl)
+        rho_grid = self.get_density_Rphiz(zbinsep=self.zbin_sep_ptl, PartType=PartType)
         ptl_grid = self._get_potential_Rphiz(PartTypes=PartTypes)
 
         dz = np.gradient(self.zbin_centers_3d_ptl, axis=2)
@@ -627,21 +627,19 @@ class PRFMDataset:
         integrand = rho_grid * dPhidz * self.zbin_sep_ptl
         return integrand
 
-    def get_weight_Rphi(self, PartTypes: List[int] = [0,1,2,3,4], polyno: int=2, wndwlen: int=5) -> np.array:
+    def get_weight_Rphi(self, PartTypes: List[int] = [0,1,2,3,4], PartType: int=0) -> np.array:
         '''Get the weights for the interstellar medium, based on the density and potential
-        grids, assuming the potential is symmetrical about the mid-plane of the disk.
-        Polyno and wndlen are the parameters for the Savitzky-Golay filter, which
-        is used to take the z-derivative of the potential grid. Output in cgs units.'''
+        grids, assuming the potential is symmetrical about the mid-plane of the disk.'''
 
-        integrand = self.get_weight_integrand_Rphiz(PartTypes=PartTypes, polyno=polyno, wndwlen=wndwlen)
-        return np.sum(np.fabs(integrand)/2., axis=2)
+        integrand = self.get_weight_integrand_Rphiz(PartTypes=PartTypes, PartType=PartType)
+        return np.nansum(np.fabs(integrand)/2., axis=2)
 
-    def get_int_force_left_right_Rphi(self, PartTypes: List[int] = [0,1,2,3,4], polyno: int=2, wndwlen: int=5) -> np.array:
+    def get_int_force_left_right_Rphi(self, PartTypes: List[int] = [0,1,2,3,4], PartType: int=0) -> np.array:
         '''Get integrated force per unit area, separated into its components above and below
         the mid-plane of the disk.'''
 
-        integrand = self.get_weight_integrand_Rphiz(PartTypes=PartTypes, polyno=polyno, wndwlen=wndwlen)
-        z_mp_idcs = np.argmin(np.cumsum(integrand, axis=2), axis=2)
+        integrand = self.get_weight_integrand_Rphiz(PartTypes=PartTypes, PartType=PartType)
+        z_mp_idcs = np.nanargmin(np.nancumsum(integrand, axis=2), axis=2)
 
         integrand_left = np.zeros_like(integrand)
         integrand_right = np.zeros_like(integrand)
@@ -650,13 +648,13 @@ class PRFMDataset:
                 integrand_left[i,j,:z_mp_idcs[i,j]] = integrand[i,j,:z_mp_idcs[i,j]]
                 integrand_right[i,j,z_mp_idcs[i,j]:] = integrand[i,j,z_mp_idcs[i,j]:]
                 
-        return np.sum(integrand_left, axis=2), np.sum(integrand_right, axis=2)
+        return np.nansum(integrand_left, axis=2), np.nansum(integrand_right, axis=2)
     
-    def get_force_Rphi(self, PartTypes: List[int] = [0,1,2,3,4], polyno: int=2, wndwlen: int=5) -> np.array:
+    def get_force_Rphi(self, PartTypes: List[int] = [0,1,2,3,4], PartType: int=0) -> np.array:
         '''Get the net force resulting from an asymmetric potential, in cgs units.'''
 
-        integrand = self.get_weight_integrand_Rphiz(PartTypes=PartTypes, polyno=polyno, wndwlen=wndwlen)
-        return np.sum(integrand, axis=2)
+        integrand = self.get_weight_integrand_Rphiz(PartTypes=PartTypes, PartType=PartType)
+        return np.nansum(integrand, axis=2)
 
     def _get_potential_Rphiz(
         self,
