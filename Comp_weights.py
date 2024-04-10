@@ -13,12 +13,12 @@ import time
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-'''Compute all values for the properties to be plotted in Pressures-weights-SFRs_fig.ipynb,
+'''Compute weights to be plotted in Pressures-weights-SFRs_fig.ipynb and other figures,
 for one galaxy at a time.'''
-PROPS = ['count', 'Ptot', 'Ptherm', 'Pturb', 'Weight', 'Force', 'ForceLeft', 'ForceRight', 'SigmaSFR']
+PROPS = ['Force', 'ForceLeft', 'ForceRight', 'PtlMinIdcs']
 
 config.read(sys.argv[1])
-galname = sys.argv[1]
+galname = sys.argv[2]
 params = config[galname]
 savestring = ""
 EXCLUDE_TEMP = params.get('EXCLUDE_TEMP')
@@ -42,6 +42,7 @@ snapnames = [
 props_3D = {key: None for key in PROPS}
 for snapname in snapnames:
     gal = PRFMDataset(
+        params=params,
         galaxy_type=galname,
         total_height=params.getfloat('TOT_HEIGHT'), # kpc
         Rmax=params.getfloat('RMAX'), # kpc
@@ -64,7 +65,7 @@ for snapname in snapnames:
 
     '''Save the Rbin_centers as a temporary pickle, if it does not already exist'''
     filesavedir = Path(params['ROOT_DIR']) / params['SUBDIR']
-    filesavename = str(filesavedir / "Rbin_centers{:s}".format(galname)) + savestring + ".pkl"
+    filesavename = str(filesavedir / "Rbin_centers_{:s}".format(galname)) + savestring + ".pkl"
     if gal.Rbin_centers is not None and not (Path(filesavename)).exists():
         with open(filesavename, "wb") as f:
             pickle.dump(gal.Rbin_centers, f)
@@ -72,12 +73,13 @@ for snapname in snapnames:
 
     '''Save the dictionary to a temporary pickle at regular intervals'''
     if (props_3D[PROPS[-1]].ndim > 2) & ((props_3D[PROPS[-1]].shape[-1] % 25 == 0) | (snapname == snapnames[-1])):
-        filesavename = str(filesavedir / "pressures-weights-SFRs_{:s}_{:s}".format(
+        filesavename = str(filesavedir / "weights_{:s}_{:s}".format(
             re.search(r'\d+', snapname).group(), galname
         )) + savestring + ".pkl"
         with open(filesavename, "wb") as f:
             pickle.dump(props_3D, f)
         logger.info("Saved: {:s}".format(str(filesavename)))
-
-    '''Delete the instance of the class to free up memory'''
-    del gal
+        for prop in PROPS: # memory
+            del props_3D[prop]
+            props_3D[prop] = None
+    del gal # memory

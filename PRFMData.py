@@ -35,6 +35,7 @@ class PRFMDataset:
         exclude_avir_below: float = None, # virial parameter
         exclude_HII: bool = False, # whether to completely exclude ionized gas
         snapname: str = "snap-DESPOTIC_300.hdf5",
+        midplane_idcs: np.array = None, # if mid-plane already known
         realign_galaxy_to_gas: bool=True, # according to angular momentum vector of gas
         realign_galaxy_to_disk: bool=False, # according to angular momentum vector of entire disk system
         required_particle_types: List[int] = [0], # just gas by default
@@ -55,6 +56,7 @@ class PRFMDataset:
         self.exclude_avir_below = exclude_avir_below
         self.exclude_HII = exclude_HII
         self.snapname = snapname
+        self.midplane_idcs = midplane_idcs
         self.realign_galaxy_to_gas = realign_galaxy_to_gas
         self.realign_galaxy_to_disk = realign_galaxy_to_disk
 
@@ -126,6 +128,7 @@ class PRFMDataset:
         self.zbin_centers_3d_ptl = np.transpose(self.zbin_centers_3d_ptl, axes=(1, 0, 2))
 
         '''Keywords to access methods'''
+        self._cached_force = None
         self._method_map = {
             'count': lambda: self.get_count_Rphi(PartType=6),
             'midplane-count': lambda: self.get_count_midplane_Rphi(PartType=6),
@@ -134,8 +137,9 @@ class PRFMDataset:
             'Ptot': lambda: self.get_gas_midplane_thermpress_Rphi(PartType=6) + self.get_gas_midplane_turbpress_Rphi(PartType=6),
             'Weight': lambda: self.get_weight_Rphi() / ah.kB_cgs,
             'Force': lambda: self.get_force_Rphi() / ah.kB_cgs,
-            'ForceLeft': lambda: self.get_int_force_left_right_Rphi()[0] / ah.kB_cgs,
-            'ForceRight': lambda: self.get_int_force_left_right_Rphi()[1] / ah.kB_cgs,
+            'ForceLeft': lambda: self._get_cached_force()[0] / ah.kB_cgs,
+            'ForceRight': lambda: self._get_cached_force()[1] / ah.kB_cgs,
+            'PtlMinIdcs': lambda: self._get_cached_force()[2],
             'SigmaSFR': lambda: self.get_SFR_surfdens_Rphi() / ah.Msol_to_g * ah.kpc_to_cm**2 * ah.yr_to_s,
             'SigmaGas': lambda: self.get_surfdens_Rphi(PartType=0) / ah.Msol_to_g * ah.pc_to_cm**2,
             'SigmaStar': lambda: self.get_surfdens_Rphi(PartType=5) / ah.Msol_to_g * ah.pc_to_cm**2,
@@ -150,6 +154,12 @@ class PRFMDataset:
         if keyword not in self._method_map:
             raise ValueError("Keyword not found in method map.")
         return self._method_map[keyword]()
+
+    def _get_cached_force(self):
+        '''Avoid recomputation of this expensive method'''
+        if self._cached_force is None:
+            self._cached_force = self.get_int_force_left_right_Rphi()
+        return self._cached_force
 
     def _read_snap_data(
         self,
@@ -498,6 +508,17 @@ class PRFMDataset:
 
         return turbpress_3D
 
+    def _select_predef_midplane(self, input_array: np.array) -> np.array:
+        '''If the mid-plane of the galaxy is already known from a previous calculation (e.g. from the minimum
+        of the gravitational potential), select the values at the mid-plane of the array.'''
+
+        midplane_value = np.zeros_like(self.midplane_idcs) * np.nan
+        for i in range(self.Rbinno):
+            for j in range(self.phibinno):
+                midplane_value[i,j] = input_array[i,j,self.midplane_idcs[i,j]]
+
+        return midplane_value
+
     def get_gas_midplane_turbpress_Rphi(self, PartType: int=None) -> np.array:
         '''Mid-plane gas turbulent pressure (2D) in the vertical/plane-perpendicular direction, in cgs units,
         divided by the Boltzmann constant.'''
@@ -508,7 +529,10 @@ class PRFMDataset:
             logger.critical("Please set PartType0 or PartType 6 in get_gas_midplane_turbpress_Rphi (gas particles only).")
 
         turbpress_3D = self._get_gas_turbpress_Rphiz(PartType=PartType)
-        return np.nanmax(turbpress_3D, axis=2)
+        if self.midplane_idcs is not None:
+            return self._select_predef_midplane(turbpress_3D)
+        else: # estimate the mid-plane by returning the maximum value along the z-axis
+            return np.nanmax(turbpress_3D, axis=2)
 
     def get_gas_midplane_thermpress_Rphi(self, PartType: int=None) -> np.array:
         '''Gas midplane thermal pressure (2D) in cgs units.'''
@@ -531,7 +555,10 @@ class PRFMDataset:
             )
             Pth[:,:,k] = Pth_bin / (self.Rbin_width * self.zbin_sep * self.Rbin_centers_2d*self.phibin_sep) # mass * U --> dens * U
 
-        return np.nanmax(Pth * (ah.gamma-1.) / ah.kB_cgs, axis=2) # dens * U --> Ptherm
+        if self.midplane_idcs is not None:
+            return self._select_predef_midplane(Pth)
+        else:
+            return np.nanmax(Pth * (ah.gamma-1.) / ah.kB_cgs, axis=2) # dens * U --> Ptherm
 
     def get_count_Rphi(self, PartType: int=None) -> np.array:
         '''Get the number of particles being sampled per bin.'''
@@ -544,6 +571,7 @@ class PRFMDataset:
             bins=(self.Rbin_edges, self.phibin_edges),
             statistic='count'
         )
+
         return count
 
     def _get_count_Rphiz(self, PartType: int=None) -> np.array:
@@ -563,7 +591,7 @@ class PRFMDataset:
                 statistic='count'
             )
             count_3D[:,:,k] = count
-
+        
         return count_3D
 
     def get_count_midplane_Rphi(self, PartType: int=None) -> np.array:
@@ -587,7 +615,10 @@ class PRFMDataset:
                     if str(e) == "All-NaN slice encountered":
                         count[i,j] = 0
 
-        return count
+        if self.midplane_idcs is not None:
+            return self._select_predef_midplane(count_3D)
+        else:
+            return count
 
     def get_surfdens_Rphi(self, PartType: int=None) -> np.array:
         '''Surface density in cgs units.'''
@@ -634,7 +665,7 @@ class PRFMDataset:
         integrand = self.get_weight_integrand_Rphiz(PartTypes=PartTypes, PartType=PartType)
         return np.nansum(np.fabs(integrand)/2., axis=2)
 
-    def get_int_force_left_right_Rphi(self, PartTypes: List[int] = [0,1,2,3,4], PartType: int=0) -> np.array:
+    def get_int_force_left_right_Rphi(self, PartTypes: List[int] = [0,1,2,3,4], PartType: int=0) -> Tuple[np.array, np.array, np.array]:
         '''Get integrated force per unit area, separated into its components above and below
         the mid-plane of the disk.'''
 
@@ -648,7 +679,7 @@ class PRFMDataset:
                 integrand_left[i,j,:z_mp_idcs[i,j]] = integrand[i,j,:z_mp_idcs[i,j]]
                 integrand_right[i,j,z_mp_idcs[i,j]:] = integrand[i,j,z_mp_idcs[i,j]:]
                 
-        return np.nansum(integrand_left, axis=2), np.nansum(integrand_right, axis=2)
+        return np.nansum(integrand_left, axis=2), np.nansum(integrand_right, axis=2), z_mp_idcs
     
     def get_force_Rphi(self, PartTypes: List[int] = [0,1,2,3,4], PartType: int=0) -> np.array:
         '''Get the net force resulting from an asymmetric potential, in cgs units.'''
