@@ -38,9 +38,22 @@ snapnames = [
     "snap-DESPOTIC_{0:03d}.hdf5".format(i) for i in 
     range(params.getint('BEGSNAPNO'), params.getint('ENDSNAPNO')+1)
 ]
+midplane_idcs_arraynames = glob.glob(str(Path(params['ROOT_DIR']) / params['SUBDIR'] / "weights_*_{:s}.pkl".format(galname)))
 
 props_3D = {key: None for key in PROPS}
-for snapname in snapnames:
+for snapname, midplane_idcs in zip(snapnames, ah.get_midplane_idcs(params)):
+    '''Open the pickle that stores the mid-plane idces, closest number larger than snapno stores values at time==snapno.'''
+    snapno = re.search(r'\d+', snapname).group()
+    midplane_idcs_arrayname = min(
+        midplane_idcs_arraynames,
+        key=lambda x: int(re.search(r'\d+', x).group()) - int(snapno) if int(re.search(r'\d+', x).group()) >= int(snapno) else np.inf
+    )
+    with open(midplane_idcs_arrayname, "rb") as f:
+        whole_dict = pickle.load(f)
+    midplane_idcs = whole_dict['PtlMinIdcs'][:,:,snapno-BEGSNAPNO]
+    del whole_dict
+
+    '''Load the gal, feed it these mid-plane idcs'''
     gal = PRFMDataset(
         params=params,
         galaxy_type=galname,
@@ -48,6 +61,7 @@ for snapname in snapnames:
         Rmax=params.getfloat('RMAX'), # kpc
         phibin_sep=np.pi/12.,
         snapname=snapname,
+        midplane_idcs=midplane_idcs, # we calculated the mid-plane indices via the minimum of the vertical grav. ptl.
         exclude_temp_above=EXCLUDE_TEMP,
         exclude_avir_below=EXCLUDE_AVIR,
         exclude_HII=True,
