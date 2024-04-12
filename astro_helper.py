@@ -17,6 +17,7 @@ gamma = 5./3.
 kB_cgs = 1.38E-16
 mp_cgs = 1.67E-24
 mu = 1.4
+G_cgs = 6.67E-8
 
 # Arepo units
 ArepoMass_to_g = 1.989E43

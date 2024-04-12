@@ -132,7 +132,7 @@ class PRFMDataset:
         self._method_map = {
             'count': lambda: self.get_count_Rphi(PartType=6),
             'midplane-count': lambda: self.get_count_midplane_Rphi(PartType=6),
-            'Ptherm': lambda: self.get_gas_midplane_thermpress_Rphi(PartType=6),
+            'Ptherm': lambda: self.get_gas_midplane_thermpress_Rphi(PartType=6) / ah.kB_cgs,
             'Pturb': lambda: self.get_gas_midplane_turbpress_Rphi(PartType=6),
             'Ptot': lambda: self.get_gas_midplane_thermpress_Rphi(PartType=6) + self.get_gas_midplane_turbpress_Rphi(PartType=6),
             'Weight': lambda: self.get_weight_Rphi() / ah.kB_cgs,
@@ -313,7 +313,6 @@ class PRFMDataset:
         snap_data['phi_coords'] = np.arctan2(snap_data['y_coords'], snap_data['x_coords'])
 
         return snap_data
-
 
     def get_data(self) -> Dict[int, Dict[str, np.array]]:
         return self.data
