@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 '''Compute quantites needed to produce the figures in Jeffreson+ 2024 for one galaxy at a time.'''
-config.read(sys.argv[1])
+config.read('./config/' + sys.argv[1])
 galname = sys.argv[2]
 params = config[galname]
 PROPS = config['GENERAL']['PROPS'].split(', ')
