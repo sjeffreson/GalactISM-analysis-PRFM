@@ -154,7 +154,7 @@ class PRFMDataset:
         '''Get the physical property array by keyword'''
 
         if keyword not in self._method_map:
-            raise ValueError("Keyword not found in method map.")
+            raise ValueError("Keyword {:s} not found in method map.".format(keyword))
         return self._method_map[keyword]()
 
     def _get_cached_force(self):
