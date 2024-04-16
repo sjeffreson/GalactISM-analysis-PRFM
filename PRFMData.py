@@ -132,6 +132,7 @@ class PRFMDataset:
         self._method_map = {
             'count': lambda: self.get_count_Rphi(PartType=6),
             'midplane-count': lambda: self.get_count_midplane_Rphi(PartType=6),
+            'midplane-dens': lambda: self.get_gas_midplane_density_Rphi(PartType=6),
             'Ptherm': lambda: self.get_gas_midplane_thermpress_Rphi(PartType=6) / ah.kB_cgs,
             'Pturb': lambda: self.get_gas_midplane_turbpress_Rphi(PartType=6),
             'Ptot': lambda: self.get_gas_midplane_thermpress_Rphi(PartType=6) + self.get_gas_midplane_turbpress_Rphi(PartType=6),
@@ -141,7 +142,8 @@ class PRFMDataset:
             'ForceRight': lambda: self._get_cached_force()[1] / ah.kB_cgs,
             'PtlMinIdcs': lambda: self._get_cached_force()[2],
             'SigmaSFR': lambda: self.get_SFR_surfdens_Rphi() / ah.Msol_to_g * ah.kpc_to_cm**2 * ah.yr_to_s,
-            'SigmaGas': lambda: self.get_surfdens_Rphi(PartType=0) / ah.Msol_to_g * ah.pc_to_cm**2,
+            'SigmaGas': lambda: self.get_surfdens_Rphi(PartType=6) / ah.Msol_to_g * ah.pc_to_cm**2,
+            'SigmaH2Gas': lambda: self.get_component_surfdens_Rphi(component='xH2') / ah.Msol_to_g * ah.pc_to_cm**2,
             'SigmaStar': lambda: self.get_surfdens_Rphi(PartType=5) / ah.Msol_to_g * ah.pc_to_cm**2,
             'Omega': lambda: self.get_Omegaz_R() * ah.Myr_to_s,
             'Kappa': lambda: self.get_kappa_R() * ah.Myr_to_s,
@@ -383,6 +385,20 @@ class PRFMDataset:
             densities[:,:,k] = dens / (self.Rbin_width * self.zbin_sep * self.Rbin_centers_2d*self.phibin_sep)
 
         return densities
+
+    def get_gas_midplane_density_Rphi(self, PartType: int=None) -> np.array:
+        '''Get the 3D mid-plane density in cgs.'''
+
+        if PartType==None:
+            logger.critical("Please specify a particle type for get_gas_midplane_turbpress_Rphi.")
+        if PartType!=0 and PartType!=6:
+            logger.critical("Please set PartType0 or PartType 6 in get_gas_midplane_turbpress_Rphi (gas particles only).")
+
+        dens_3D = self.get_density_Rphiz(PartType=PartType)
+        if self.midplane_idcs is not None:
+            return self._select_predef_midplane(dens_3D)
+        else: # estimate the mid-plane by returning the maximum value along the z-axis
+            return np.nanmax(dens_3D, axis=2)
 
     def get_gas_av_vel_xyz_Rphi(
         self,
@@ -627,6 +643,20 @@ class PRFMDataset:
 
         dens, R_edge, phi_edge, binnumber = binned_statistic_2d(
             self.data[PartType]["R_coords"], self.data[PartType]["phi_coords"], self.data[PartType]["masses"],
+            bins=(self.Rbin_edges, self.phibin_edges),
+            statistic='sum'
+        )
+
+        return dens / (self.Rbin_width * self.Rbin_centers_2d*self.phibin_sep)
+
+    def get_component_surfdens_Rphi(self, component: str=None) -> np.array:
+        '''Surface density in cgs units, of a particular gas component'''
+
+        if component==None:
+            logger.critical("Please specify a gas component for get_component_surfdens_Rphi.")
+
+        dens, R_edge, phi_edge, binnumber = binned_statistic_2d(
+            self.data[0]["R_coords"], self.data[0]["phi_coords"], self.data[0]["masses"] * self.data[0][component],
             bins=(self.Rbin_edges, self.phibin_edges),
             statistic='sum'
         )

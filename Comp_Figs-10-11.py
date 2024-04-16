@@ -13,9 +13,11 @@ import time
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-'''Compute counts and properties of non-ionized gas, to be plotted in Pressures-weights-SFRs_fig.ipynb,
-for one galaxy at a time.'''
-PROPS = ['count', 'midplane-count', 'Ptot', 'Ptherm', 'Pturb', 'SigmaSFR']
+'''Compute kappa, mid-plane densities and gas densities (non-weight, non-pressure properties needed
+to produce Figures 10 and 11 of Jeffreson et al. 2024), for one galaxy at a time.'''
+### TO DO: consolidate this with the other Comp_ scripts - lots of repeated code here
+# that can be avoided by putting more parameters in the Config file
+PROPS = ['count', 'midplane-count', 'midplane-dens', 'SigmaH2Gas', 'SigmaGas', 'Kappa']
 
 config.read(sys.argv[1])
 galname = sys.argv[2]
@@ -69,16 +71,19 @@ for snapname in snapnames:
         exclude_avir_below=EXCLUDE_AVIR,
         exclude_HII=True,
         realign_galaxy_to_gas=True, # according to angular momentum vector of gas
-        required_particle_types=[0,1,2,3,4], # just gas by default
     )
 
     for prop in PROPS:
+        if prop in ['Kappa', 'Vcirc', 'Omega']:
+            axisnum = 1
+        else:
+            axisnum = 2
         if props_3D[prop] is None:
             props_3D[prop] = gal.get_prop_by_keyword(prop)
-        elif props_3D[prop].ndim == 2:
-            props_3D[prop] = np.stack((props_3D[prop], gal.get_prop_by_keyword(prop)), axis=2)
+        elif props_3D[prop].ndim == axisnum:
+            props_3D[prop] = np.stack((props_3D[prop], gal.get_prop_by_keyword(prop)), axis=axisnum)
         else:
-            props_3D[prop] = np.concatenate((props_3D[prop], gal.get_prop_by_keyword(prop)[:,:,np.newaxis]), axis=2)
+            props_3D[prop] = np.concatenate((props_3D[prop], gal.get_prop_by_keyword(prop)[...,np.newaxis]), axis=axisnum)
         logger.info("Adding {0}, shape of {1}: {2}".format(snapname, prop, props_3D[prop].shape))
 
     '''Save the Rbin_centers as a temporary pickle, if it does not already exist'''
@@ -90,8 +95,8 @@ for snapname in snapnames:
         logger.info("Saved: {:s}".format(str(filesavename)))
 
     '''Save the dictionary to a temporary pickle at regular intervals'''
-    if (props_3D[PROPS[-1]].ndim > 2) & ((props_3D[PROPS[-1]].shape[-1] % 25 == 0) | (snapname == snapnames[-1])):
-        filesavename = str(filesavedir / "pressures-SFRs-fixed-mp_{:s}_{:s}".format(
+    if (props_3D[PROPS[-1]].ndim > axisnum) & ((props_3D[PROPS[-1]].shape[-1] % 25 == 0) | (snapname == snapnames[-1])):
+        filesavename = str(filesavedir / "Figs-10-11_{:s}_{:s}".format(
             re.search(r'\d+', snapname).group(), galname
         )) + savestring + ".pkl"
         with open(filesavename, "wb") as f:
