@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 '''Compute quantites needed to produce the figures in Jeffreson+ 2024 for one galaxy at a time.'''
-config.read('./config/' + sys.argv[1])
+config.read(sys.argv[1])
 galname = sys.argv[2]
 params = config[galname]
 PROPS = config['GENERAL']['PROPS'].split(', ')
@@ -34,9 +34,10 @@ if EXCLUDE_AVIR == 'None':
 else:
     EXCLUDE_AVIR = float(EXCLUDE_AVIR)
     savestring += "_avir{:.1e}".format(EXCLUDE_AVIR)
+snapstr = params.get('SNAPSTR')
 
 snapnames = [
-    "snap-DESPOTIC_{0:03d}.hdf5".format(i) for i in 
+    snapstr + "_{0:03d}.hdf5".format(i) for i in 
     range(params.getint('BEGSNAPNO'), params.getint('ENDSNAPNO')+1)
 ]
 midplane_idcs_arraynames = glob.glob(str(Path(params['ROOT_DIR']) / params['SUBDIR'] / "weights_*_{:s}.pkl".format(galname)))
@@ -86,7 +87,7 @@ for snapname in snapnames:
         logger.info("Adding {0}, shape of {1}: {2}".format(snapname, prop, props_3D[prop].shape))
 
     '''Save the Rbin_centers as a temporary pickle, if it does not already exist'''
-    filesavedir = Path(params['ROOT_DIR']) / params['SUBDIR']
+    filesavedir = Path(params['SAVE_DIR']) / params['SUBDIR']
     filesavename = str(filesavedir / "Rbin_centers_{:s}".format(galname)) + savestring + ".pkl"
     if gal.Rbin_centers is not None and not (Path(filesavename)).exists():
         with open(filesavename, "wb") as f:

@@ -199,14 +199,22 @@ class PRFMDataset:
             snapshot.close()
             return snap_data
         else:
-            snap_data["AlphaVir"] = PartType_data['AlphaVir'][:]
+            # standard Arepo
             snap_data["U"] = PartType_data['InternalEnergy'][:] * PartType_data['InternalEnergy'].attrs['to_cgs']
             snap_data["temps"] = (ah.gamma - 1.) * snap_data["U"] / ah.kB_cgs * ah.mu * ah.mp_cgs
             snap_data["Density"] = PartType_data['Density'][:] * PartType_data['Density'].attrs['to_cgs']
             snap_data["SFRs"] = PartType_data['StarFormationRate'][:] * PartType_data['StarFormationRate'].attrs['to_cgs']
-            snap_data["xH2"] = PartType_data['ChemicalAbundances'][:,0] * 2.
-            snap_data["xHP"] = PartType_data['ChemicalAbundances'][:,1]
-            snap_data["xHI"] = 1. - snap_data["xH2"] - snap_data["xHP"]
+            # specific to Jeffreson et al. runs
+            try:
+                snap_data["xH2"] = PartType_data['ChemicalAbundances'][:,0] * 2.
+                snap_data["xHP"] = PartType_data['ChemicalAbundances'][:,1]
+                snap_data["xHI"] = 1. - snap_data["xH2"] - snap_data["xHP"]
+                snap_data["AlphaVir"] = PartType_data['AlphaVir'][:]
+            except KeyError:
+                snap_data["xH2"] = np.zeros(len(snap_data["x_coords"]))
+                snap_data["xHP"] = np.zeros(len(snap_data["x_coords"]))
+                snap_data["xHI"] = np.ones(len(snap_data["x_coords"]))
+                snap_data["AlphaVir"] = np.zeros(len(snap_data["x_coords"]))
             snapshot.close()
             return snap_data
     
