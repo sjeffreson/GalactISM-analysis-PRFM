@@ -96,9 +96,9 @@ for snapname in snapnames:
 
     '''Save the dictionary to a temporary pickle at regular intervals'''
     if (props_3D[PROPS[-1]].ndim > axisnum) & ((props_3D[PROPS[-1]].shape[-1] % 25 == 0) | (snapname == snapnames[-1])):
-        filesavename = str(filesavedir / PROPSSTRING + "_{:s}_{:s}".format(
+        filesavename = str(filesavedir / PROPSSTRING) + "_{:s}_{:s}".format(
             re.search(r'\d+', snapname).group(), galname
-        )) + savestring + ".pkl"
+        ) + savestring + ".pkl"
         with open(filesavename, "wb") as f:
             pickle.dump(props_3D, f)
         logger.info("Saved: {:s}".format(str(filesavename)))

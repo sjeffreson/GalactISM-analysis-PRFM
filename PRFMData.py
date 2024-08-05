@@ -134,8 +134,9 @@ class PRFMDataset:
             'midplane-count': lambda: self.get_count_midplane_Rphi(PartType=6),
             'midplane-dens': lambda: self.get_gas_midplane_density_Rphi(PartType=6),
             'Ptherm': lambda: self.get_gas_midplane_thermpress_Rphi(PartType=6) / ah.kB_cgs,
-            'Pturb': lambda: self.get_gas_midplane_turbpress_Rphi(PartType=6),
-            'Ptot': lambda: self.get_gas_midplane_thermpress_Rphi(PartType=6) + self.get_gas_midplane_turbpress_Rphi(PartType=6),
+            'Pturb': lambda: self.get_gas_midplane_veldisp_turbpress_Rphi(PartType=6)[1],
+            'Ptot': lambda: self.get_gas_midplane_thermpress_Rphi(PartType=6) + self.get_gas_midplane_veldisp_turbpress_Rphi(PartType=6)[1],
+            'sigma_eff': lambda: self.get_gas_midplane_veldisp_turbpress_Rphi(PartType=6)[0],
             'Weight': lambda: self.get_weight_Rphi() / ah.kB_cgs,
             'Force': lambda: self.get_force_Rphi() / ah.kB_cgs,
             'ForceLeft': lambda: self._get_cached_force()[0] / ah.kB_cgs,
@@ -398,9 +399,9 @@ class PRFMDataset:
         '''Get the 3D mid-plane density in cgs.'''
 
         if PartType==None:
-            logger.critical("Please specify a particle type for get_gas_midplane_turbpress_Rphi.")
+            logger.critical("Please specify a particle type for get_gas_midplane_density_Rphi.")
         if PartType!=0 and PartType!=6:
-            logger.critical("Please set PartType0 or PartType 6 in get_gas_midplane_turbpress_Rphi (gas particles only).")
+            logger.critical("Please set PartType0 or PartType 6 in get_gas_midplane_density_Rphi (gas particles only).")
 
         dens_3D = self.get_density_Rphiz(PartType=PartType)
         if self.midplane_idcs is not None:
@@ -507,13 +508,13 @@ class PRFMDataset:
 
         return tuple(veldisps_xyz)
 
-    def _get_gas_turbpress_Rphiz(self, PartType: int=None) -> np.array:
+    def _get_gas_veldisp_turbpress_Rphiz(self, PartType: int=None) -> Tuple[np.array, np.array]:
         '''3D Gas turbulent pressure in cgs units, divided by the Boltzmann constant.'''
 
         if PartType==None:
-            logger.critical("Please specify a particle type for get_gas_turbpress_Rphiz.")
+            logger.critical("Please specify a particle type for get_gas_veldisp_turbpress_Rphiz.")
         if PartType!=0 and PartType!=6:
-            logger.critical("Please set PartType0 or PartType 6 in get_gas_turbpress_Rphiz (gas particles only).")
+            logger.critical("Please set PartType0 or PartType 6 in get_gas_veldisp_turbpress_Rphiz (gas particles only).")
 
         density = self.get_density_Rphiz(PartType=PartType)
 
@@ -529,7 +530,7 @@ class PRFMDataset:
         
         turbpress_3D = veldisps_z**2 * density / ah.kB_cgs
 
-        return turbpress_3D
+        return veldisps_z, turbpress_3D
 
     def _select_predef_midplane(self, input_array: np.array) -> np.array:
         '''If the mid-plane of the galaxy is already known from a previous calculation (e.g. from the minimum
@@ -542,20 +543,20 @@ class PRFMDataset:
 
         return midplane_value
 
-    def get_gas_midplane_turbpress_Rphi(self, PartType: int=None) -> np.array:
-        '''Mid-plane gas turbulent pressure (2D) in the vertical/plane-perpendicular direction, in cgs units,
-        divided by the Boltzmann constant.'''
+    def get_gas_midplane_veldisp_turbpress_Rphi(self, PartType: int=None) -> Tuple[np.array, np.array]:
+        '''Mid-plane gas velocity dispersion and turbulent pressure (2D) in the vertical/plane-perpendicular
+        direction, in cgs units, turbpress divided by the Boltzmann constant.'''
 
         if PartType==None:
-            logger.critical("Please specify a particle type for get_gas_midplane_turbpress_Rphi.")
+            logger.critical("Please specify a particle type for get_gas_midplane_veldisp_turbpress_Rphi.")
         if PartType!=0 and PartType!=6:
-            logger.critical("Please set PartType0 or PartType 6 in get_gas_midplane_turbpress_Rphi (gas particles only).")
+            logger.critical("Please set PartType0 or PartType 6 in get_gas_midplane_veldisp_turbpress_Rphi (gas particles only).")
 
-        turbpress_3D = self._get_gas_turbpress_Rphiz(PartType=PartType)
+        veldisp_3D, turbpress_3D = self._get_gas_veldisp_turbpress_Rphiz(PartType=PartType)
         if self.midplane_idcs is not None:
-            return self._select_predef_midplane(turbpress_3D)
+            return self._select_predef_midplane(veldisp_3D), self._select_predef_midplane(turbpress_3D)
         else: # estimate the mid-plane by returning the maximum value along the z-axis
-            return np.nanmax(turbpress_3D, axis=2)
+            return np.nanmax(veldisp_3D, axis=2), np.nanmax(turbpress_3D, axis=2)
 
     def get_gas_midplane_thermpress_Rphi(self, PartType: int=None) -> np.array:
         '''Gas midplane thermal pressure (2D) in cgs units.'''
@@ -626,7 +627,7 @@ class PRFMDataset:
         if PartType!=0 and PartType!=6:
             logger.critical("Please set PartType0 or PartType 6 in get_count_midplane_Rphi (gas particles only).")
 
-        turbpress_3D = self._get_gas_turbpress_Rphiz(PartType=PartType)
+        turbpress_3D = self._get_gas_veldisp_turbpress_Rphiz(PartType=PartType)[1]
         count_3D = self._get_count_Rphiz(PartType=PartType)
         count = np.zeros((self.Rbinno, self.phibinno))
         for i in range(self.Rbinno):
