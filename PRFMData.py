@@ -148,7 +148,10 @@ class PRFMDataset:
             'SigmaStar': lambda: self.get_surfdens_Rphi(PartType=5) / ah.Msol_to_g * ah.pc_to_cm**2,
             'Omega': lambda: self.get_Omegaz_R() * ah.Myr_to_s,
             'Kappa': lambda: self.get_kappa_R() * ah.Myr_to_s,
-            'Vcirc': lambda: self.get_rotation_curve_R() / ah.kms_to_cms
+            'Vcirc': lambda: self.get_rotation_curve_R() / ah.kms_to_cms,
+            'star_veldisp_z': lambda: self.get_veldisps_xyz_Rphi(meanvels_xyz=None, z_min=-self.total_height, z_max=self.total_height, PartType=5)[2],
+            'star_veldisp_R': lambda: self.get_veldisps_xyz_Rphi(meanvels_xyz=None, z_min=-self.total_height, z_max=self.total_height, PartType=5)[3],
+            'star_veldisp_phi': lambda: self.get_veldisps_xyz_Rphi(meanvels_xyz=None, z_min=-self.total_height, z_max=self.total_height, PartType=5)[4],
         }
 
     def get_prop_by_keyword(self, keyword: str) -> np.array:
@@ -191,6 +194,8 @@ class PRFMDataset:
         snap_data["velxs"] = PartType_data['Velocities'][:,0] * PartType_data['Velocities'].attrs['to_cgs']
         snap_data["velys"] = PartType_data['Velocities'][:,1] * PartType_data['Velocities'].attrs['to_cgs']
         snap_data["velzs"] = PartType_data['Velocities'][:,2] * PartType_data['Velocities'].attrs['to_cgs']
+        snap_data["velRs"] = (snap_data["x_coords"] * snap_data["velxs"] + snap_data["y_coords"] * snap_data["velys"]) / snap_data["R_coords"]
+        snap_data["velphis"] = (-snap_data["y_coords"] * snap_data["velxs"] + snap_data["x_coords"] * snap_data["velys"]) / snap_data["R_coords"]
         snap_data["Potential"] = PartType_data['Potential'][:] * PartType_data['Potential'].attrs['to_cgs']
         if 'Masses' in PartType_data:
             snap_data["masses"] = PartType_data['Masses'][:] * PartType_data['Masses'].attrs['to_cgs']
@@ -409,18 +414,16 @@ class PRFMDataset:
         else: # estimate the mid-plane by returning the maximum value along the z-axis
             return np.nanmax(dens_3D, axis=2)
 
-    def get_gas_av_vel_xyz_Rphi(
+    def get_av_vel_xyz_Rphi(
         self,
         z_min: float=None,
         z_max: float=None,
-        PartType: int=None
-    ) -> Tuple[np.array, np.array, np.array]:
+        PartType: int=6
+    ) -> Tuple[np.array, np.array, np.array, np.array, np.array]:
         '''Get the average 2D gas velocity components in the x, y, and z directions, in cm/s.'''
 
         if PartType==None:
-            logger.critical("Please specify a particle type for get_gas_av_vel_xyz_Rphi.")
-        if PartType!=0 and PartType!=6:
-            logger.critical("Please set PartType0 or PartType 6 in get_gas_av_vel_xyz_Rphi (gas particles only).")
+            logger.critical("Please specify a particle type for get_av_vel_xyz_Rphi.")
 
         if z_min==None:
             z_min = -self.total_height
@@ -438,7 +441,7 @@ class PRFMDataset:
         )
 
         meanvels = []
-        for velstring in ["velxs", "velys", "velzs"]:
+        for velstring in ["velxs", "velys", "velzs", "velRs", "velphis"]:
             meanvel, R_edge, phi_edge, binnumbers = binned_statistic_2d(
                 self.data[PartType]["R_coords"][cnd], self.data[PartType]["phi_coords"][cnd], self.data[PartType]["masses"][cnd]*self.data[PartType][velstring][cnd],
                 bins=(self.Rbin_edges, self.phibin_edges), expand_binnumbers=True,
@@ -449,20 +452,18 @@ class PRFMDataset:
 
         return tuple(meanvels)
 
-    def get_gas_veldisps_xyz_Rphi(
+    def get_veldisps_xyz_Rphi(
         self,
         meanvels_xyz: Tuple=None,
         z_min: float=None,
         z_max: float=None,
-        PartType: int=None,
-    ) -> Tuple[np.array, np.array, np.array]:
+        PartType: int=6,
+    ) -> Tuple[np.array, np.array, np.array, np.array, np.array]:
         '''2D Gas velocity dispersion components in cgs. Distinct from the mid-plane turbulent
         velocity dispersion, this is the velocity dispersion along columns in z.'''
 
         if PartType==None:
-            logger.critical("Please specify a particle type for get_gas_veldisps_xyz_Rphi.")
-        if PartType!=0 and PartType!=6:
-            logger.critical("Please set PartType0 or PartType 6 in get_gas_veldisps_xyz_Rphi (gas particles only).")
+            logger.critical("Please specify a particle type for get_veldisps_xyz_Rphi.")
 
         if z_min==None:
             z_min = -self.total_height
@@ -482,14 +483,14 @@ class PRFMDataset:
         '''Subtract the mean velocity in each bin from the velocity components, then take the
         root-mean-square of the differences to get the velocity dispersions.'''
         if meanvels_xyz==None:
-            meanvels = self.get_gas_av_vel_xyz_Rphi(z_min=z_min, z_max=z_max, PartType=PartType)
+            meanvels = self.get_av_vel_xyz_Rphi(z_min=z_min, z_max=z_max, PartType=PartType)
         else:
             meanvels = meanvels_xyz
 
         maxbinnumber_x = len(R_edge)-1
         maxbinnumber_y = len(phi_edge)-1
         veldisps_xyz = []
-        for velstring, meanvel in zip(["velxs", "velys", "velzs"], meanvels):
+        for velstring, meanvel in zip(["velxs", "velys", "velzs", "velRs", "velphis"], meanvels):
             bn_x, bn_y = binnumbers.copy()
             bn_x[bn_x>maxbinnumber_x] = maxbinnumber_x
             bn_y[bn_y>maxbinnumber_y] = maxbinnumber_y
@@ -519,13 +520,13 @@ class PRFMDataset:
         density = self.get_density_Rphiz(PartType=PartType)
 
         veldisps_z = np.zeros((self.Rbinno, self.phibinno, self.zbinno)) * np.nan
-        meanvels = self.get_gas_av_vel_xyz_Rphi(z_min=-self.total_height, z_max=self.total_height, PartType=PartType)
+        meanvels = self.get_av_vel_xyz_Rphi(z_min=-self.total_height, z_max=self.total_height, PartType=PartType)
         for zbmin, zbmax, k in zip(self.zbin_edges[:-1], self.zbin_edges[1:], range(self.zbinno)):
             cnd = (self.data[PartType]["z_coords"] > zbmin) & (self.data[PartType]["z_coords"] < zbmax)
             if len(self.data[PartType]["R_coords"][cnd]) == 0:
                 veldisps_z[:,:,k] = np.ones((self.Rbinno, self.phibinno)) * np.nan
                 continue
-            veldisps_x, veldisp_y, veldisp_z = self.get_gas_veldisps_xyz_Rphi(meanvels_xyz=meanvels, z_min=zbmin, z_max=zbmax, PartType=PartType)
+            _, _, veldisp_z, _, _ = self.get_veldisps_xyz_Rphi(meanvels_xyz=meanvels, z_min=zbmin, z_max=zbmax, PartType=PartType)
             veldisps_z[:,:,k] = veldisp_z
         
         turbpress_3D = veldisps_z**2 * density / ah.kB_cgs
