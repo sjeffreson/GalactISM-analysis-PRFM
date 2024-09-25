@@ -40,23 +40,28 @@ snapnames = [
     snapstr + "_{0:03d}.hdf5".format(i) for i in 
     range(params.getint('BEGSNAPNO'), params.getint('ENDSNAPNO')+1)
 ]
-midplane_idcs_arraynames = glob.glob(str(Path(params['ROOT_DIR']) / params['SUBDIR'] / "weights_*_{:s}.pkl".format(galname)))
+if params['MIDPLANEIDCS'] == 'True':
+    midplane_idcs_arraynames = glob.glob(str(Path(params['ROOT_DIR']) / params['SUBDIR'] / "weights_*_{:s}.pkl".format(galname)))
 
 props_3D = {key: None for key in PROPS}
 for snapname in snapnames:
     '''Open the pickle that stores the mid-plane idces, closest number larger than snapno stores values at time==snapno.'''
     snapno = re.search(r'\d+', snapname).group()
-    midplane_idcs_arrayname = min(
-        midplane_idcs_arraynames,
-        key=lambda x: int(re.search(r'\d+', x.rsplit('/')[-1]).group()) - int(snapno) if
-        int(re.search(r'\d+', x.rsplit('/')[-1]).group()) > int(snapno)-1 else np.inf
-    )
-    midplane_idcs_no = re.search(r'\d+', midplane_idcs_arrayname.rsplit('/')[-1]).group()
-    with open(midplane_idcs_arrayname, "rb") as f:
-        whole_dict = pickle.load(f)
-    timelen_idcs = whole_dict['PtlMinIdcs'].shape[-1]
-    midplane_idcs = whole_dict['PtlMinIdcs'][:,:,int(snapno)-1-(int(midplane_idcs_no)-timelen_idcs)]
-    del whole_dict
+
+    if params['MIDPLANEIDCS'] == 'True':
+        midplane_idcs_arrayname = min(
+            midplane_idcs_arraynames,
+            key=lambda x: int(re.search(r'\d+', x.rsplit('/')[-1]).group()) - int(snapno) if
+            int(re.search(r'\d+', x.rsplit('/')[-1]).group()) > int(snapno)-1 else np.inf
+        )
+        midplane_idcs_no = re.search(r'\d+', midplane_idcs_arrayname.rsplit('/')[-1]).group()
+        with open(midplane_idcs_arrayname, "rb") as f:
+            whole_dict = pickle.load(f)
+        timelen_idcs = whole_dict['PtlMinIdcs'].shape[-1]
+        midplane_idcs = whole_dict['PtlMinIdcs'][:,:,int(snapno)-1-(int(midplane_idcs_no)-timelen_idcs)]
+        del whole_dict
+    else:
+        midplane_idcs = None
 
     '''Load the gal, feed it these mid-plane idcs'''
     gal = PRFMDataset(
