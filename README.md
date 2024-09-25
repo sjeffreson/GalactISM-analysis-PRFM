@@ -15,17 +15,17 @@ The code is designed to be flexible (can be used to compute any subset of quanti
 
 ## Creating your own config files
 The config file options are as follows:
-`EXCLUDE_TEMP` (K): Temperature above which to exclude gas (20,000K for cool-warm ISM). If set to 'None', no gas is excluded.
-`EXCLUDE_AVIR`: Virial parameter below which to exclude gas (2 for cool-warm ISM). If set to 'None', no gas is excluded.
-`TOT_HEIGHT` (kpc): Gas at this distance above/below the galactic mid-plane is excluded to speed computation.
-`RMAX` (kpc): Gas outside this galactocentric radius is excluded to speed computation.
-`MIDPLANEIDCS`: Set to `True` if you have already computed mid-plane indices according to the potential minimum, which you want to use. Set to False if you wish to define the mid-plane at z=0, OR you are computing the mid-plane indices themselves.
-`BEGSNAPNO`: First snapshot number to analyze
-`ENDSNAPNO`: Last snapshot number to analyze
-`ROOT_DIR`: Your data root directory
-`SAVE_DIR`: Your root directory for saving new, post-processed data
-`SUBDIR`: The subdirectory for any one galaxy, should be INSIDE both `ROOT_DIR` and `SAVE_DIR`
-`SNAPSTR`: The string (excluding numbers) defining each snapshot. If in standard Arepo format, this will just be `snap`.
+* `EXCLUDE_TEMP` (K): Temperature above which to exclude gas (20,000K for cool-warm ISM). If set to 'None', no gas is excluded.
+* `EXCLUDE_AVIR`: Virial parameter below which to exclude gas (2 for cool-warm ISM). If set to 'None', no gas is excluded.
+* `TOT_HEIGHT` (kpc): Gas at this distance above/below the galactic mid-plane is excluded to speed computation.
+* `RMAX` (kpc): Gas outside this galactocentric radius is excluded to speed computation.
+* `MIDPLANEIDCS`: Set to `True` if you have already computed mid-plane indices according to the potential minimum, which you want to use. Set to False if you wish to define the mid-plane at z=0, OR you are computing the mid-plane indices themselves.
+* `BEGSNAPNO`: First snapshot number to analyze
+* `ENDSNAPNO`: Last snapshot number to analyze
+* `ROOT_DIR`: Your data root directory
+* `SAVE_DIR`: Your root directory for saving new, post-processed data
+* `SUBDIR`: The subdirectory for any one galaxy, should be INSIDE both `ROOT_DIR` and `SAVE_DIR`
+* `SNAPSTR`: The string (excluding numbers) defining each snapshot. If in standard Arepo format, this will just be `snap`.
 
 ## Test notebooks
 There are three notebooks to test whether the `PRFMData` class is working as expected on your galaxy:
